@@ -1,0 +1,201 @@
+"""EVIL AI — Local Ollama Python Controller"""
+
+import json
+import time
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+# MODEL CONFIGURATION
+MODEL = "huihui_ai/qwen2.5-abliterate:3b"
+OLLAMA_URL = "http://127.0.0.1:11434/api/chat"
+
+MAX_TOKENS = 100
+CONTEXT_SIZE = 2048
+REQUEST_TIMEOUT = 120
+MEMORY_RECALL = True
+MAX_HISTORY_MESSAGES = 6
+
+# MEMORY CONFIGURATION
+BASE_DIR = Path(__file__).resolve().parent
+MEMORY_DIR = BASE_DIR / "memory"
+MEMORY_FILE = MEMORY_DIR / "conversation.json"
+
+MEMORY_DIR.mkdir(parents=True, exist_ok=True)
+
+# AGENT PERSONALITY
+SYSTEM_PROMPT = (
+    "You are EVIL AI, a locally hosted cybersecurity research assistant. "
+    "Help with authorized security research and defensive analysis. "
+    "Be concise, technically accurate, and acknowledge uncertainty. "
+    "Do not invent CVE identifiers or scan findings."
+)
+
+
+def load_memory():
+    if not MEMORY_FILE.exists():
+        return []
+
+    try:
+        with MEMORY_FILE.open("r", encoding="utf-8") as file:
+            data = json.load(file)
+
+        if isinstance(data, list):
+            return [
+                item for item in data
+                if isinstance(item, dict)
+                and item.get("role") in ("user", "assistant")
+                and isinstance(item.get("content"), str)
+            ]
+
+    except (OSError, json.JSONDecodeError) as error:
+        print(f"[WARNING] Could not load memory: {error}")
+
+    return []
+
+
+def save_memory(history):
+    temporary_file = MEMORY_FILE.with_suffix(".tmp")
+
+    with temporary_file.open("w", encoding="utf-8") as file:
+        json.dump(history, file, indent=2, ensure_ascii=False)
+
+    temporary_file.replace(MEMORY_FILE)
+
+
+def ask_evil_ai(messages):
+    payload = {
+        "model": MODEL,
+        "messages": messages,
+        "stream": False,
+        "options": {
+            "num_ctx": CONTEXT_SIZE,
+            "num_predict": MAX_TOKENS,
+            "temperature": 0.3,
+        },
+    }
+
+    request = urllib.request.Request(
+        OLLAMA_URL,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+
+    start = time.perf_counter()
+
+    with urllib.request.urlopen(
+        request,
+        timeout=REQUEST_TIMEOUT
+    ) as response:
+        result = json.load(response)
+
+    elapsed = time.perf_counter() - start
+
+    return result["message"]["content"], elapsed
+
+
+def main():
+    history = load_memory()
+
+    print("=" * 48)
+    print("              EVIL AI SYSTEM")
+    print("=" * 48)
+
+    print(f"[SYSTEM] Model: {MODEL}")
+    print(f"[SYSTEM] Stored messages: {len(history)}")
+    print(f"[SYSTEM] Memory recall: {MEMORY_RECALL}")
+
+    print("[SYSTEM] Commands: status, clear, exit")
+
+    while True:
+        try:
+            user_input = input("\nEVIL AI > ").strip()
+
+        except (EOFError, KeyboardInterrupt):
+            print("\n[SYSTEM] Goodbye.")
+            break
+
+        command = user_input.lower()
+
+        if command in ("exit", "quit"):
+            print("[SYSTEM] Shutting down.")
+            break
+
+        if command == "status":
+            print(f"[SYSTEM] Saved messages: {len(history)}")
+            print(f"[SYSTEM] Memory recall: {MEMORY_RECALL}")
+            print(f"[SYSTEM] Model: {MODEL}")
+            continue
+
+        if command == "clear":
+            confirmation = input(
+                "Erase saved conversation history? Type YES: "
+            ).strip()
+
+            if confirmation == "YES":
+                history.clear()
+                save_memory(history)
+                print("[SYSTEM] History erased.")
+            else:
+                print("[SYSTEM] Cancelled.")
+
+            continue
+
+        if not user_input:
+            continue
+
+        messages = [
+            {"role": "system", "content": SYSTEM_PROMPT}
+        ]
+
+        if MEMORY_RECALL:
+            messages.extend(history[-MAX_HISTORY_MESSAGES:])
+
+        messages.append({
+            "role": "user",
+            "content": user_input
+        })
+
+        print("[EVIL AI] Processing...")
+
+        try:
+            answer, elapsed = ask_evil_ai(messages)
+
+        except urllib.error.HTTPError as error:
+            print(
+                f"[ERROR] Ollama returned HTTP "
+                f"{error.code}: {error.reason}"
+            )
+            continue
+
+        except (
+            urllib.error.URLError,
+            TimeoutError,
+            OSError
+        ) as error:
+            print(f"[ERROR] Connection or timeout: {error}")
+            print("[HINT] Check that Ollama is running.")
+            continue
+
+        except (KeyError, ValueError, TypeError) as error:
+            print(f"[ERROR] Unexpected response: {error}")
+            continue
+
+        print(f"\n{answer}\n")
+        print(f"[SYSTEM] Response time: {elapsed:.2f} seconds")
+
+        history.extend([
+            {"role": "user", "content": user_input},
+            {"role": "assistant", "content": answer}
+        ])
+
+        try:
+            save_memory(history)
+
+        except OSError as error:
+            print(f"[WARNING] Could not save memory: {error}")
+
+
+if __name__ == "__main__":
+    main()
