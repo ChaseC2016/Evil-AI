@@ -1,0 +1,34 @@
+@echo off
+title EVIL AI - Launcher
+
+echo ============================
+echo       EVIL AI STARTUP
+echo ============================
+
+:: Check whether Ollama is already running
+curl -s --max-time 2 http://127.0.0.1:11434/api/tags >nul 2>&1
+
+if errorlevel 1 (
+    echo Starting Ollama...
+    start "" /min ollama serve
+) else (
+    echo Ollama is already running.
+)
+
+:: Wait for Ollama to become available
+echo Waiting for Ollama...
+
+:wait_loop
+curl -s --max-time 2 http://127.0.0.1:11434/api/tags >nul 2>&1
+
+if errorlevel 1 (
+    timeout /t 2 /nobreak >nul
+    goto wait_loop
+)
+
+echo Ollama is ready!
+echo Starting EVIL AI...
+
+:: Launch Python controller
+cd /d "%~dp0"
+python main.py
